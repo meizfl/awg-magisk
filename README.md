@@ -1,133 +1,182 @@
 # AmneizaWG Magisk
 
-Magisk module for AmneziaWG (a WireGuard fork with traffic obfuscation) on Android:
-brings up `awg0` via the userspace backend `amneziawg-go` and `awg-quick`,
-and manages policy routing and DNS without a root VPN app.
+A Magisk module that runs [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-tools)
+(a WireGuard fork with traffic obfuscation) directly on rooted Android — no
+companion app, no VpnService, no Termux required.
 
-## ⚠️ Important: binaries must be built yourself
+It brings up `wg0` through the `amneziawg-go` userspace backend and the
+**native** Android `awg-quick` (compiled straight from
+`wg-quick/android.c` in the upstream repo — the same code path the official
+AmneziaWG Android app uses), which configures routing, iptables and DNS
+(via `android.net.IDnsResolver` over Binder) on its own.
 
-Prebuilt binaries for `awg`, `awg-quick`, and `amneziawg-go` are **not included** in this
-archive — building them requires the Android NDK (to link against bionic libc), which
-was unavailable in the environment where this template was prepared (no access to
-`dl.google.com`). The full build pipeline is already written and automated —
-you only need to run `build/build.sh` once on your machine (Linux/macOS/WSL
-with internet) or in CI (e.g. GitHub Actions).
+## Why this exists
 
-### Build
+The official AmneziaWG Android app wraps this same logic behind
+`VpnService` and a GUI. This module runs it as a systemless Magisk service
+instead — useful for headless setups, routers-in-a-phone, CI devices, or
+anyone who'd rather manage a `wg0.conf` with a text editor than tap through
+an app.
 
-Requirements: `git`, `curl`, `unzip`, `go >= 1.21`, ~10 GB free space
-(the Android NDK unpacks to several GB).
+## ⚠️ Binaries are not included — build them yourself
+
+`awg`, `awg-quick` and `amneziawg-go` are **not** shipped in this repo.
+Building them requires the Android NDK (for bionic libc linking), so the
+build step is a separate, one-time thing you run yourself:
 
 ```bash
 cd build
-./build.sh                # builds for arm64, arm, x86_64, x86
-./build.sh arm64           # or only arm64-v8a (99% of modern phones)
+./build.sh                # builds arm64, arm, x86_64, x86
+./build.sh arm64           # or just arm64-v8a (99% of modern phones)
 ```
 
-The script will:
+Requirements: `git`, `curl`, `unzip`, `go >= 1.21`, ~10 GB free disk space
+(the Android NDK unpacks to a few GB).
 
-1. Download Android NDK r27c.
-2. Clone [amneziawg-tools](https://github.com/amnezia-vpn/amneziawg-tools)
+The script:
+1. Downloads Android NDK r27c.
+2. Clones [amneziawg-tools](https://github.com/amnezia-vpn/amneziawg-tools)
    and [amneziawg-go](https://github.com/amnezia-vpn/amneziawg-go).
-3. Build `awg` — the CLI utility (in the amneziawg-tools Makefile the target is
-   named `wg`; it is renamed to `awg` on copy) — dynamically linked for the
-   Android ABI with the NDK compiler. Static linking is not used: the device
-   already provides system `libc.so`.
-4. Compile the **native** `awg-quick` from `wg-quick/android.c` — this is not
-   a bash script, but a ready C implementation for Android from the
-   amneziawg-tools repository itself. It: brings up the interface via
-   `amneziawg-go` (when it detects AmneziaWG parameters `Jc`/`Jmin`/`H1`–`H4` in
-   the config), sets up routes and iptables rules, and applies DNS via
+3. Builds `awg` — the CLI tool (the Makefile target is called `wg`, only
+   renamed to `awg` on `make install`) — dynamically linked against the
+   Android ABI via the NDK toolchain. No static linking: the device already
+   ships a system `libc.so`.
+4. Compiles the **native** `awg-quick` from `wg-quick/android.c` — not a
+   bash script, a real C implementation shipped by amneziawg-tools
+   specifically for Android. It starts `amneziawg-go` itself (when it
+   detects AmneziaWG parameters like Jc/Jmin/H1-H4 in the config),
+   configures routes and iptables rules, and applies DNS through
    `android.net.IDnsResolver` over Binder (`dlopen("libbinder_ndk.so")` at
-   runtime — no separate link against libbinder is needed).
-5. Cross-compile `amneziawg-go` (`GOOS=android`, cgo enabled,
-   NDK compiler).
-6. Place everything under `bin/arch/<abi>/` and package the ready
+   runtime — no explicit link-time dependency on libbinder).
+5. Cross-compiles `amneziawg-go` (`GOOS=android`, cgo enabled, NDK
+   compiler).
+6. Lays everything out under `bin/arch/<abi>/` and packages the final
    `build/dist/awg-quick-magisk.zip`.
 
-### Why `awg-supervisor` is so simple
+### Older devices (API < 24, Android 5.0–6.0)
 
-Originally in this template, `awg-supervisor` itself started `amneziawg-go`,
-waited for the UAPI socket, and manually configured routes/DNS. After checking
-against the real amneziawg-tools sources, it turned out that all of this
-functionality is already implemented inside the compiled `awg-quick`
-(`wg-quick/android.c`). Therefore `awg-supervisor` is now a thin wrapper:
-`awg-quick up/down <config>` plus waiting for network and logging.
-`scripts/routing.sh` and `scripts/dns.sh` remain as **optional** extra hooks
-(e.g. custom LAN exclusions) — enabled by the `AWG_EXTRA_HOOKS=1` variable in
-`service.sh`; they are off by default to avoid duplicating or conflicting with
-what `awg-quick` already does.
+`build.sh` defaults to `API_LEVEL=21` — the hard floor for any NDK r23+
+(there are no headers/libs below it). Nothing extra to do for that; to
+target something narrower instead:
 
-On module install, `customize.sh` detects the device ABI and copies the
-required binaries from `bin/arch/<abi>/` into `bin/`.
+```bash
+API_LEVEL=24 ./build.sh arm64
+```
 
-## Installation on device
+Verified in the source to *not* be a blocker on API 21–23:
+- `genkey.c`'s `getentropy()` call is gated behind `__GLIBC__`/`__APPLE__`
+  and is never compiled on Android — it always falls through to a raw
+  `getrandom` syscall, which works on any kernel regardless of API level.
+- `libbinder_ndk.so` is loaded via `dlopen()` with a `binder_available`
+  check; if it's missing on an old device, DNS-via-Binder is silently
+  skipped instead of crashing. Routing and iptables rules are unaffected.
 
-1. Edit `config/wg0.conf` — fill in your `PrivateKey`, the server `PublicKey`,
-   `Endpoint`, and obfuscation parameters (`Jc`, `Jmin`, `Jmax`, `H1`–`H4`).
+Not independently verified on real Android 5/6 hardware: the exact `ndc`
+command syntax `android.c` uses may differ on very old `netd` versions. If
+routing doesn't apply on such a device (interface comes up but traffic
+doesn't flow), check `logs/supervisor.log` for `[#] ndc ...` errors.
+
+### Why `awg-supervisor` is so thin
+
+`awg-supervisor` is a minimal wrapper: `awg-quick up/down <config>` plus a
+network-readiness wait and logging. It does **not** start `amneziawg-go` or
+touch routing/DNS itself — the compiled `awg-quick` (`android.c`) already
+does all of that internally. `scripts/routing.sh` and `scripts/dns.sh` are
+optional extra hooks (e.g. your own LAN-bypass rules), enabled only via
+`AWG_EXTRA_HOOKS=1` in `service.sh`, to avoid duplicating or conflicting
+with what `awg-quick` already handles.
+
+### bionic is missing `strchrnul()`
+
+`wg-quick/android.c` calls the GNU `strchrnul()` extension in its per-app
+UID selection code, even though bionic never provides it — it's a
+glibc/BSD-only function, unrelated to `_GNU_SOURCE` (notably, `config.c` in
+the same repo explicitly avoids it with the comment "This is what
+strchrnul is for, but that isn't portable" — looks like an oversight
+specific to `android.c`). `build.sh` patches in a portable `static inline`
+replacement right after the `ARRAY_SIZE` macro before compiling
+(idempotent, keyed off a marker comment, so reruns and future repo updates
+that don't touch that region stay safe).
+
+### The `CALLING_PACKAGE` workaround
+
+`awg-quick` (`android.c`) sends an `am broadcast` to the official
+`org.amnezia.awg` app at the end of `up`/`down` to refresh its UI. Since
+this module doesn't use that app, the broadcast would hit a non-existent
+package, fail, and roll back the whole `up`. All entry points
+(`service.sh`, `action.sh`, `awg-supervisor`, `uninstall.sh`) export
+`CALLING_PACKAGE=org.amnezia.awg`, which matches `AWG_PACKAGE_NAME` at
+compile time and makes `awg-quick` skip the broadcast entirely
+(`broadcast_change()` in the source).
+
+### The UAPI socket and read-only `/var`
+
+By default both the C `awg` CLI (`RUNSTATEDIR`, normally `/var/run`) and
+the Go daemon `amneziawg-go` (`ipc.socketDirectory`, normally
+`/var/run/amneziawg`) look for the UAPI socket under `/var`, which doesn't
+exist on Android (`/` is mounted read-only). `build/build.sh` redirects
+both paths to `run/` inside the module directory via `make RUNSTATEDIR=...`
+and `-ldflags -X .../ipc.socketDirectory=...` respectively — they have to
+match, or `awg` won't be able to reach the daemon's socket.
+
+## Installing on a device
+
+1. Edit `config/wg0.conf` — fill in your `PrivateKey`, the server's
+   `PublicKey`, `Endpoint`, and the obfuscation parameters (`Jc`, `Jmin`,
+   `Jmax`, `H1`–`H4`).
 2. Install `build/dist/awg-quick-magisk.zip` via the Magisk App:
    Modules → Install from storage.
-3. Reboot the device — `service.sh` will bring the tunnel up automatically
-   after `sys.boot_completed=1`.
-4. The "Action" button in the Magisk App toggles VPN on/off (`action.sh`).
+3. Reboot — `service.sh` brings the tunnel up automatically once
+   `sys.boot_completed=1`.
+4. The "Action" button in the Magisk App toggles the VPN on/off
+   (`action.sh`).
 
-## Structure
+## Layout
 
 ```
 awg-magisk/
 ├── module.prop          # module metadata
-├── customize.sh         # ABI selection and permissions on install
-├── service.sh           # auto-start after boot
-├── action.sh            # VPN toggle via Action button
-├── uninstall.sh         # clean up routes/DNS on uninstall
+├── customize.sh          # ABI detection + permissions at install time
+├── service.sh              # autostart after boot
+├── action.sh                 # toggle VPN via the Action button
+├── uninstall.sh                # tears down routes/DNS on removal
 ├── bin/
-│   ├── awg              # management CLI (wg-compatible), from amneziawg-tools
-│   ├── awg-quick        # Android-adapted wg-quick
-│   ├── amneziawg-go     # userspace WireGuard/AmneziaWG backend
-│   └── awg-supervisor   # orchestrator: start backend, up/down, routing, dns
-├── config/wg0.conf      # your config (template)
+│   ├── awg                       # control CLI (wg-compatible), from amneziawg-tools
+│   ├── awg-quick                    # native Android wg-quick (compiled from android.c)
+│   ├── amneziawg-go                    # userspace WireGuard/AmneziaWG backend
+│   └── awg-supervisor                     # thin wrapper: up/down, network wait, logging
+├── config/wg0.conf                          # your config (template)
 ├── scripts/
-│   ├── routing.sh       # policy routing (ip rule/ip route, fwmark)
-│   ├── dns.sh           # DNS via `ndc resolver` (Android netd)
-│   └── network.sh       # wait_for_network / MTU auto-detection
-├── logs/                # service/action/supervisor/backend logs
+│   ├── routing.sh                              # optional extra policy routing (ip rule/fwmark)
+│   ├── dns.sh                                     # optional ndc-based DNS fallback
+│   └── network.sh                                    # wait_for_network / MTU detection
+├── logs/                                                # service/action/supervisor logs
 └── build/
-    ├── build.sh         # cross-compile with NDK (run manually)
-    └── package.sh       # final zip packaging
+    ├── build.sh                                            # NDK cross-compilation (run manually)
+    └── package.sh                                             # final zip packaging
 ```
 
 ## Logs
 
-See `logs/service.log`, `logs/supervisor.log`, `logs/amneziawg-go.log`,
-`logs/routing.log`, `logs/dns.log` directly in the module directory
-(`/data/adb/modules/awg_quick_magisk/logs/`) via a root file manager
-or `adb shell`.
+Check `logs/service.log`, `logs/supervisor.log`, `logs/routing.log`,
+`logs/dns.log` directly inside the module directory
+(`/data/adb/modules/awg_quick_magisk/logs/`) via a root file manager or
+`adb shell`.
 
 ## Known limitations
 
-- **`am broadcast` to a non-existent app**: at the end of `up`/`down`,
-  `awg-quick` (`wg-quick/android.c`, function `broadcast_change()`) sends
-  `am broadcast` to the package `org.amnezia.awg` (the official AmneziaWG
-  app) to refresh its UI. If the environment variable `CALLING_PACKAGE` is
-  not set or does not match this package, the broadcast goes to a non-existent
-  receiver, fails with an error, and the whole `up` is rolled back. All our
-  scripts (`service.sh`, `action.sh`, `awg-supervisor`, `uninstall.sh`) already
-  set `CALLING_PACKAGE=org.amnezia.awg` so the code skips the broadcast
-  entirely — no need to touch this unless you changed `AWG_PACKAGE_NAME` at
-  build time.
-- **UAPI socket and read-only `/var`**: by default both the C utility `awg`
-  (`RUNSTATEDIR`, usually `/var/run`) and the Go daemon `amneziawg-go`
-  (`ipc.socketDirectory`, usually `/var/run/amneziawg`) look for the socket under
-  `/var`, which does not exist on Android (`/` is mounted read-only).
-  `build/build.sh` overrides both paths to `run/` inside the module directory
-  via `make RUNSTATEDIR=...` and `-ldflags -X .../ipc.socketDirectory=...`
-  respectively — they must match, otherwise `awg` will fail to connect to the
-  daemon socket with an error like `Cannot find device`.
-- `scripts/dns.sh` uses `ndc resolver`, which requires root and the presence of
-  `netd` (standard on all Android). On custom ROMs with a different DNS stack,
-  a patch may be needed.
-- `routing.sh` uses fixed `ip rule` priorities (51820–51822) — if you already
-  have another VPN module with the same priorities, change `AWG_TABLE`/priorities
-  via environment variables in `service.sh`.
-- Minimum `minSdkVersion` the binaries are built for is API 24
-  (Android 7.0), set in `build/build.sh` (`API_LEVEL`).
+- `scripts/dns.sh` uses `ndc resolver`, which requires root and `netd`
+  (standard on all Android builds). Custom ROMs with a different DNS stack
+  may need adjustments — but note this script is optional; `awg-quick`
+  already configures DNS on its own via Binder.
+- `scripts/routing.sh` uses fixed `ip rule` priorities (51820–51822) — if
+  you already have another VPN module using the same priorities, change
+  `AWG_TABLE`/priorities via environment variables in `service.sh`.
+- Minimum `API_LEVEL` the binaries are built for defaults to 21 (Android
+  5.0), configurable in `build/build.sh`.
+
+## Disclaimer
+
+This project isn't affiliated with the Amnezia VPN team. It just builds
+and wires together their open-source `amneziawg-tools` and `amneziawg-go`
+components into a standalone Magisk module.

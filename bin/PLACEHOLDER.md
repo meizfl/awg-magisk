@@ -1,3 +1,4 @@
-After running `build/build.sh`, the `arch/<abi>/` sub-folders will appear here
-with the built `awg`, `awg-quick`, `amneziawg-go`, `awg-supervisor` binaries
-for each Android architecture. This file can be deleted.
+After running `build/build.sh`, this directory will get `arch/<abi>/`
+subfolders containing the compiled `awg`, `awg-quick`, `amneziawg-go` and
+`awg-supervisor` binaries for each Android architecture. This file can be
+deleted once that's done.

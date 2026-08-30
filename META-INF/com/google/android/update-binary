@@ -1,6 +1,6 @@
 #!/sbin/sh
-# Compatibility stub. Install the module via the Magisk App:
-# Modules -> Install from storage -> select this zip.
+# Compatibility stub. Install the module through the Magisk App instead:
+# Modules -> Install from storage -> pick this zip.
 OUTFD=$2
 ZIPFILE=$3
 ui_print() { echo "$1"; }

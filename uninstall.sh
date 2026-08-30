@@ -1,7 +1,7 @@
 #!/system/bin/sh
-# uninstall.sh - run by Magisk before the module is finally removed.
-# Guarantees the interface is brought down and routes/DNS are cleaned up, so
-# the device isn't left without network.
+# uninstall.sh - executed by Magisk right before the module is removed for
+# good. Reliably tears down the interface and cleans up routes/DNS so the
+# device isn't left without networking.
 
 MODDIR=${0%/*}
 export PATH="$MODDIR/bin:/system/bin:/system/xbin:$PATH"
@@ -15,11 +15,11 @@ if [ -x "$MODDIR/bin/awg-supervisor" ]; then
   "$MODDIR/bin/awg-supervisor" stop "$CONFIG" >/dev/null 2>&1
 fi
 
-# Just in case, kill the processes directly if the supervisor is unavailable
+# Kill the processes directly too, just in case awg-supervisor is unavailable
 pkill -f "amneziawg-go" 2>/dev/null
 pkill -f "awg-supervisor" 2>/dev/null
 
-# Roll back routing/DNS rules if the scripts are available
+# Roll back routing/DNS rules if the optional hook scripts are present
 [ -x "$MODDIR/scripts/routing.sh" ] && "$MODDIR/scripts/routing.sh" down >/dev/null 2>&1
 [ -x "$MODDIR/scripts/dns.sh" ] && "$MODDIR/scripts/dns.sh" down >/dev/null 2>&1
 
