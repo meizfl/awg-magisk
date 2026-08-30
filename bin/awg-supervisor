@@ -1,0 +1,89 @@
+#!/system/bin/sh
+# awg-supervisor start|stop|status <config>
+#
+# Тонкая обёртка над нативным awg-quick (скомпилирован из
+# amneziawg-tools/src/wg-quick/android.c). Этот бинарник САМ поднимает
+# userspace-бэкенд amneziawg-go (через popen("amneziawg-go <iface>")),
+# настраивает маршруты/iptables и DNS через android.net.IDnsResolver
+# по Binder - поэтому supervisor не запускает amneziawg-go вручную и
+# не делает routing/dns сам, чтобы не дублировать и не конфликтовать
+# с тем, что уже делает android.c.
+#
+# scripts/routing.sh и scripts/dns.sh - это НЕОБЯЗАТЕЛЬНЫЕ дополнительные
+# хуки (например, свои LAN-исключения), вызываются после основного up,
+# только если явно включены переменной AWG_EXTRA_HOOKS=1.
+
+MODDIR="${AWG_MODDIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+BIN="$MODDIR/bin"
+IFACE="${AWG_IFACE:-wg0}"
+LOG="$MODDIR/logs/supervisor.log"
+
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
+
+export PATH="$BIN:/system/bin:/system/xbin:$PATH"
+
+# android.c (наш awg-quick) в конце up/down шлёт `am broadcast` в приложение
+# org.amnezia.awg, чтобы обновить его UI. У нас этого приложения нет - без
+# этой переменной broadcast улетает в несуществующий пакет, `am broadcast`
+# возвращает ошибку, и весь `awg-quick up` откатывается назад (см.
+# broadcast_change() в wg-quick/android.c: если CALLING_PACKAGE совпадает с
+# AWG_PACKAGE_NAME, broadcast пропускается целиком).
+export CALLING_PACKAGE="org.amnezia.awg"
+
+. "$MODDIR/scripts/network.sh"
+
+do_start() {
+  CONFIG="${1:-$MODDIR/config/wg0.conf}"
+  if [ ! -f "$CONFIG" ]; then
+    log "ERROR: конфиг $CONFIG не найден"
+    exit 1
+  fi
+
+  wait_for_network 30 || log "WARNING: сеть не подтвердилась за отведённое время, пробую всё равно"
+
+  log "awg-quick up $CONFIG"
+  "$BIN/awg-quick" up "$CONFIG" >> "$LOG" 2>&1
+  RC=$?
+  if [ $RC -ne 0 ]; then
+    log "ERROR: awg-quick up завершился с кодом $RC"
+    exit $RC
+  fi
+
+  if [ "${AWG_EXTRA_HOOKS:-0}" = "1" ]; then
+    "$MODDIR/scripts/routing.sh" up >> "$LOG" 2>&1
+    "$MODDIR/scripts/dns.sh" up "$CONFIG" >> "$LOG" 2>&1
+  fi
+
+  log "AmneziaWG успешно запущен на $IFACE"
+}
+
+do_stop() {
+  CONFIG="${1:-$MODDIR/config/wg0.conf}"
+
+  if [ "${AWG_EXTRA_HOOKS:-0}" = "1" ]; then
+    "$MODDIR/scripts/dns.sh" down >> "$LOG" 2>&1
+    "$MODDIR/scripts/routing.sh" down >> "$LOG" 2>&1
+  fi
+
+  log "awg-quick down $CONFIG"
+  "$BIN/awg-quick" down "$CONFIG" >> "$LOG" 2>&1
+
+  log "AmneziaWG остановлен"
+}
+
+do_status() {
+  if ip link show "$IFACE" >/dev/null 2>&1; then
+    echo "running"
+    exit 0
+  else
+    echo "stopped"
+    exit 1
+  fi
+}
+
+case "$1" in
+  start) do_start "$2" ;;
+  stop) do_stop "$2" ;;
+  status) do_status ;;
+  *) echo "usage: awg-supervisor {start|stop|status} [config]"; exit 1 ;;
+esac

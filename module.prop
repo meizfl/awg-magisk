@@ -1,0 +1,7 @@
+id=awg_quick_magisk
+name=AmneziaWG (awg-quick) Magisk Module
+version=Release A
+versionCode=1
+author=MeizFL
+description=AmneziaWG VPN client (awg / awg-quick / amneziawg-go userspace) as a Magisk module with routing, DNS management and a supervisor daemon.
+updateJson=
