@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# package.sh - упаковывает готовый модуль (после build.sh) в awg-quick-magisk.zip
+# package.sh - packages the finished module (after build.sh) into awg-quick-magisk.zip
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,7 +11,7 @@ mkdir -p "$DIST_DIR"
 rm -f "$DIST_DIR/$ZIP_NAME"
 
 if [ ! -d "$MODULE_DIR/bin/arch" ] || [ -z "$(ls -A "$MODULE_DIR/bin/arch" 2>/dev/null)" ]; then
-  echo "ERROR: bin/arch пуст. Сначала запустите build.sh для сборки бинарников." >&2
+  echo "ERROR: bin/arch is empty. Run build.sh first to build the binaries." >&2
   exit 1
 fi
 
@@ -21,4 +21,4 @@ zip -r -X "$DIST_DIR/$ZIP_NAME" \
   bin/arch config scripts logs README.md META-INF \
   -x "*.DS_Store" -x "build/*"
 
-echo "Собран: $DIST_DIR/$ZIP_NAME"
+echo "Built: $DIST_DIR/$ZIP_NAME"

@@ -1,17 +1,17 @@
 #!/system/bin/sh
 # awg-supervisor start|stop|status <config>
 #
-# Тонкая обёртка над нативным awg-quick (скомпилирован из
-# amneziawg-tools/src/wg-quick/android.c). Этот бинарник САМ поднимает
-# userspace-бэкенд amneziawg-go (через popen("amneziawg-go <iface>")),
-# настраивает маршруты/iptables и DNS через android.net.IDnsResolver
-# по Binder - поэтому supervisor не запускает amneziawg-go вручную и
-# не делает routing/dns сам, чтобы не дублировать и не конфликтовать
-# с тем, что уже делает android.c.
+# A thin wrapper around the native awg-quick (compiled from
+# amneziawg-tools/src/wg-quick/android.c). This binary ITSELF brings up the
+# userspace backend amneziawg-go (via popen("amneziawg-go <iface>")),
+# sets up routes/iptables and DNS via android.net.IDnsResolver
+# over Binder - so the supervisor does not start amneziawg-go manually and
+# does not do routing/dns itself, to avoid duplicating or conflicting
+# with what android.c already does.
 #
-# scripts/routing.sh и scripts/dns.sh - это НЕОБЯЗАТЕЛЬНЫЕ дополнительные
-# хуки (например, свои LAN-исключения), вызываются после основного up,
-# только если явно включены переменной AWG_EXTRA_HOOKS=1.
+# scripts/routing.sh and scripts/dns.sh are OPTIONAL extra
+# hooks (e.g. custom LAN exclusions), called after the main up,
+# only when explicitly enabled via the AWG_EXTRA_HOOKS=1 variable.
 
 MODDIR="${AWG_MODDIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 BIN="$MODDIR/bin"
@@ -22,12 +22,12 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
 
 export PATH="$BIN:/system/bin:/system/xbin:$PATH"
 
-# android.c (наш awg-quick) в конце up/down шлёт `am broadcast` в приложение
-# org.amnezia.awg, чтобы обновить его UI. У нас этого приложения нет - без
-# этой переменной broadcast улетает в несуществующий пакет, `am broadcast`
-# возвращает ошибку, и весь `awg-quick up` откатывается назад (см.
-# broadcast_change() в wg-quick/android.c: если CALLING_PACKAGE совпадает с
-# AWG_PACKAGE_NAME, broadcast пропускается целиком).
+# At the end of up/down, android.c (our awg-quick) sends an `am broadcast`
+# to the org.amnezia.awg app to refresh its UI. We don't have that app - without
+# this variable the broadcast goes to a non-existent package, `am broadcast`
+# returns an error, and the whole `awg-quick up` gets rolled back (see
+# broadcast_change() in wg-quick/android.c: if CALLING_PACKAGE matches
+# AWG_PACKAGE_NAME, the broadcast is skipped entirely).
 export CALLING_PACKAGE="org.amnezia.awg"
 
 . "$MODDIR/scripts/network.sh"
@@ -35,17 +35,17 @@ export CALLING_PACKAGE="org.amnezia.awg"
 do_start() {
   CONFIG="${1:-$MODDIR/config/wg0.conf}"
   if [ ! -f "$CONFIG" ]; then
-    log "ERROR: конфиг $CONFIG не найден"
+    log "ERROR: config $CONFIG not found"
     exit 1
   fi
 
-  wait_for_network 30 || log "WARNING: сеть не подтвердилась за отведённое время, пробую всё равно"
+  wait_for_network 30 || log "WARNING: network not confirmed in time, trying anyway"
 
   log "awg-quick up $CONFIG"
   "$BIN/awg-quick" up "$CONFIG" >> "$LOG" 2>&1
   RC=$?
   if [ $RC -ne 0 ]; then
-    log "ERROR: awg-quick up завершился с кодом $RC"
+    log "ERROR: awg-quick up exited with code $RC"
     exit $RC
   fi
 
@@ -54,7 +54,7 @@ do_start() {
     "$MODDIR/scripts/dns.sh" up "$CONFIG" >> "$LOG" 2>&1
   fi
 
-  log "AmneziaWG успешно запущен на $IFACE"
+  log "AmneziaWG started successfully on $IFACE"
 }
 
 do_stop() {
@@ -68,7 +68,7 @@ do_stop() {
   log "awg-quick down $CONFIG"
   "$BIN/awg-quick" down "$CONFIG" >> "$LOG" 2>&1
 
-  log "AmneziaWG остановлен"
+  log "AmneziaWG stopped"
 }
 
 do_status() {

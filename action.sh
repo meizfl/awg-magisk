@@ -1,6 +1,6 @@
 #!/system/bin/sh
-# action.sh - вызывается при нажатии кнопки "Action" в Magisk App.
-# Переключает (toggle) состояние интерфейса awg0: up <-> down.
+# action.sh - triggered when the "Action" button is pressed in the Magisk App.
+# Toggles the awg0 interface state: up <-> down.
 
 MODDIR=${0%/*}
 LOG="$MODDIR/logs/action.log"
@@ -14,11 +14,11 @@ CONFIG="$MODDIR/config/wg0.conf"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] action.sh triggered" >> "$LOG"
 
 if "$MODDIR/bin/awg-supervisor" status >/dev/null 2>&1; then
-  echo "AmneziaWG активен, останавливаю..."
+  echo "AmneziaWG is active, stopping..."
   "$MODDIR/bin/awg-supervisor" stop "$CONFIG" >> "$LOG" 2>&1
-  echo "Остановлено."
+  echo "Stopped."
 else
-  echo "AmneziaWG выключен, запускаю..."
+  echo "AmneziaWG is off, starting..."
   "$MODDIR/bin/awg-supervisor" start "$CONFIG" >> "$LOG" 2>&1
-  echo "Запущено."
+  echo "Started."
 fi

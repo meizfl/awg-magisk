@@ -1,29 +1,29 @@
 #!/system/bin/sh
-# customize.sh - выполняется Magisk Manager/App при установке модуля
+# customize.sh - run by Magisk Manager/App during module installation
 
 SKIPUNZIP=0
 
 ui_print "- AmneziaWG (awg-quick) Magisk Module"
-ui_print "- Определение архитектуры устройства..."
+ui_print "- Detecting device architecture..."
 
 case "$ARCH" in
   arm64) BIN_ARCH="arm64" ;;
   arm)   BIN_ARCH="arm" ;;
   x64)   BIN_ARCH="x86_64" ;;
   x86)   BIN_ARCH="x86" ;;
-  *) ui_print "! Неизвестная архитектура: $ARCH"; abort "! Установка прервана" ;;
+  *) ui_print "! Unknown architecture: $ARCH"; abort "! Installation aborted" ;;
 esac
 
-ui_print "- Архитектура: $BIN_ARCH"
+ui_print "- Architecture: $BIN_ARCH"
 
-# Если в архиве бинарники разложены по под-папкам arch/<arch>/,
-# переносим нужные в bin/ и удаляем остальные, чтобы не раздувать модуль.
+# If the archive has binaries laid out under arch/<arch>/ subfolders,
+# move the ones we need into bin/ and remove the rest to avoid bloating the module.
 if [ -d "$MODPATH/bin/arch" ]; then
   if [ -d "$MODPATH/bin/arch/$BIN_ARCH" ]; then
     cp -f "$MODPATH/bin/arch/$BIN_ARCH/"* "$MODPATH/bin/" 2>/dev/null
   else
-    ui_print "! Бинарники для $BIN_ARCH не найдены в архиве"
-    abort "! Пересоберите модуль для этой архитектуры (build/build.sh)"
+    ui_print "! No binaries found for $BIN_ARCH in the archive"
+    abort "! Rebuild the module for this architecture (build/build.sh)"
   fi
   rm -rf "$MODPATH/bin/arch"
 fi
@@ -42,5 +42,5 @@ set_perm_recursive "$MODPATH/logs" 0 0 0755 0644
 mkdir -p "$MODPATH/run"
 set_perm_recursive "$MODPATH/run" 0 0 0755 0755
 
-ui_print "- Не забудьте отредактировать config/wg0.conf перед запуском!"
-ui_print "- Готово."
+ui_print "- Don't forget to edit config/wg0.conf before starting!"
+ui_print "- Done."

@@ -1,8 +1,8 @@
 #!/system/bin/sh
 # dns.sh up|down
-# На Android нет resolvconf/systemd-resolved, поэтому DNS для VPN-интерфейса
-# выставляется через `ndc resolver` (Netd Control) — это тот же механизм,
-# которым пользуется штатный VpnService у Android-клиентов WireGuard.
+# Android has no resolvconf/systemd-resolved, so DNS for the VPN interface
+# is set via `ndc resolver` (Netd Control) - the same mechanism used by
+# the built-in Android VpnService for WireGuard clients.
 
 IFACE="${AWG_IFACE:-wg0}"
 MODDIR="${AWG_MODDIR:-$(dirname "$0")/..}"
@@ -11,7 +11,7 @@ DNS_BACKUP="$MODDIR/logs/.dns_backup"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
 
-# DNS-сервера читаем из конфига (строка "DNS = ..." в [Interface])
+# Read DNS servers from the config (the "DNS = ..." line in [Interface])
 read_dns_from_config() {
   CONFIG="$1"
   grep -E '^[[:space:]]*DNS[[:space:]]*=' "$CONFIG" 2>/dev/null \
@@ -22,18 +22,18 @@ up() {
   CONFIG="$1"
   DNS_SERVERS="$(read_dns_from_config "$CONFIG")"
   if [ -z "$DNS_SERVERS" ]; then
-    log "DNS не задан в конфиге, пропускаю"
+    log "DNS not set in config, skipping"
     return 0
   fi
   log "dns up: iface=$IFACE dns=$DNS_SERVERS"
 
-  # Сохраняем текущие DNS сети по умолчанию, чтобы откатить при down
+  # Save the current default network DNS to restore it on down
   getprop net.dns1 > "$DNS_BACKUP" 2>/dev/null
 
   if command -v ndc >/dev/null 2>&1; then
     ndc resolver setnetdns "$IFACE" "" $DNS_SERVERS 2>>"$LOG"
   else
-    log "ndc недоступен, DNS не применён (нужен root/ndc в PATH)"
+    log "ndc not available, DNS not applied (root/ndc in PATH required)"
   fi
 }
 

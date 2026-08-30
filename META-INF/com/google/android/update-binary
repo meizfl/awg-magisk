@@ -1,11 +1,11 @@
 #!/sbin/sh
-# Заглушка совместимости. Устанавливайте модуль через Magisk App:
-# Modules -> Install from storage -> выбрать этот zip.
+# Compatibility stub. Install the module via the Magisk App:
+# Modules -> Install from storage -> select this zip.
 OUTFD=$2
 ZIPFILE=$3
 ui_print() { echo "$1"; }
 ui_print "**********************************"
 ui_print " AmneziaWG Magisk Module"
 ui_print "**********************************"
-ui_print "- Установите через Magisk App: Modules -> Install from storage"
+ui_print "- Install via the Magisk App: Modules -> Install from storage"
 exit 1

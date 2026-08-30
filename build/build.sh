@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# build.sh — кросс-компилирует awg, awg-quick и amneziawg-go под Android
-# (bionic libc) и раскладывает результат по bin/arch/<arch>/ модуля,
-# затем упаковывает финальный Magisk-flashable zip.
+# build.sh — cross-compiles awg, awg-quick and amneziawg-go for Android
+# (bionic libc) and places the result under the module's bin/arch/<arch>/,
+# then packages the final Magisk-flashable zip.
 #
-# Требования на машине сборки:
-#   - bash, curl или wget, unzip, git
-#   - Go >= 1.21 (для сборки amneziawg-go)
-#   - доступ в интернет к github.com и dl.google.com (для Android NDK)
+# Requirements on the build machine:
+#   - bash, curl or wget, unzip, git
+#   - Go >= 1.21 (to build amneziawg-go)
+#   - internet access to github.com and dl.google.com (for the Android NDK)
 #
-# Использование:
-#   ./build.sh              # соберёт под все ABI: arm64, arm, x86_64, x86
-#   ./build.sh arm64         # только под arm64-v8a (самый частый случай)
+# Usage:
+#   ./build.sh              # builds for all ABIs: arm64, arm, x86_64, x86
+#   ./build.sh arm64         # only arm64-v8a (the most common case)
 
 set -euo pipefail
 
@@ -20,7 +20,7 @@ WORK_DIR="$SCRIPT_DIR/.work"
 NDK_VERSION="r27c"
 NDK_ZIP="android-ndk-${NDK_VERSION}-linux.zip"
 NDK_URL="https://dl.google.com/android/repository/${NDK_ZIP}"
-API_LEVEL=24   # Android 7.0+, разумный минимум для современных VPN-клиентов
+API_LEVEL=24   # Android 7.0+, a reasonable minimum for modern VPN clients
 
 AWG_TOOLS_REPO="https://github.com/amnezia-vpn/amneziawg-tools.git"
 AWG_GO_REPO="https://github.com/amnezia-vpn/amneziawg-go.git"
@@ -30,7 +30,7 @@ ARCHES="${1:-arm64 arm x86_64 x86}"
 mkdir -p "$WORK_DIR"
 cd "$WORK_DIR"
 
-echo "==> [1/5] Подготовка Android NDK ${NDK_VERSION}"
+echo "==> [1/5] Preparing Android NDK ${NDK_VERSION}"
 if [ ! -d "$WORK_DIR/android-ndk-${NDK_VERSION}" ]; then
   if [ ! -f "$NDK_ZIP" ]; then
     curl -fL -o "$NDK_ZIP" "$NDK_URL"
@@ -40,11 +40,11 @@ fi
 NDK_HOME="$WORK_DIR/android-ndk-${NDK_VERSION}"
 TOOLCHAIN="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
 
-echo "==> [2/5] Клонирование исходников amneziawg-tools и amneziawg-go"
+echo "==> [2/5] Cloning amneziawg-tools and amneziawg-go sources"
 [ -d amneziawg-tools ] || git clone --depth 1 "$AWG_TOOLS_REPO" amneziawg-tools
 [ -d amneziawg-go ]    || git clone --depth 1 "$AWG_GO_REPO" amneziawg-go
 
-# Карта: наше имя ABI -> (Go GOARCH, clang target triple, каталог в bin/arch)
+# Map: our ABI name -> (Go GOARCH, clang target triple, directory in bin/arch)
 declare -A GOARCH_MAP=( [arm64]=arm64 [arm]=arm [x86_64]=amd64 [x86]=386 )
 declare -A CLANG_TARGET=(
   [arm64]="aarch64-linux-android${API_LEVEL}"
@@ -53,24 +53,24 @@ declare -A CLANG_TARGET=(
   [x86]="i686-linux-android${API_LEVEL}"
 )
 
-# Куда android.c ищет конфиги по умолчанию - совпадает с id модуля в module.prop
+# Where android.c looks for configs by default - matches the module id in module.prop
 MODULE_ID="awg_quick_magisk"
 MODDIR_ON_DEVICE="/data/adb/modules/${MODULE_ID}"
 CONFIG_SEARCH_PATH="${MODDIR_ON_DEVICE}/config"
 
-# На Android "/" и "/var" смонтированы read-only, поэтому дефолтный путь
-# UAPI-сокета /var/run/amneziawg/<iface>.sock ломается с "read-only file
-# system". Переносим сокет в каталог модуля (он на /data, всегда writable).
-# Это ОБЩИЙ контракт между C-утилитой awg (макрос RUNSTATEDIR, задаётся
-# через `make RUNSTATEDIR=...`) и Go-демоном amneziawg-go (переменная
-# ipc.socketDirectory, задаётся через `-ldflags -X`, специально
-# экспортирована для этого в исходниках amneziawg-go). Оба должны совпасть,
-# иначе `awg` не сможет подключиться к сокету демона.
-RUNSTATEDIR="${MODDIR_ON_DEVICE}/run"                 # для C: SOCK_PATH = RUNSTATEDIR "/amneziawg/"
-GO_SOCKET_DIR="${RUNSTATEDIR}/amneziawg"               # для Go: sockPath = socketDirectory + "/" + iface + ".sock"
+# On Android "/" and "/var" are mounted read-only, so the default UAPI socket
+# path /var/run/amneziawg/<iface>.sock fails with "read-only file
+# system". We move the socket into the module directory (it's on /data, always
+# writable). This is a SHARED contract between the C utility awg (RUNSTATEDIR
+# macro, set via `make RUNSTATEDIR=...`) and the Go daemon amneziawg-go
+# (ipc.socketDirectory variable, set via `-ldflags -X`, specifically exported
+# for this purpose in the amneziawg-go sources). Both must match, otherwise
+# `awg` will not be able to connect to the daemon's socket.
+RUNSTATEDIR="${MODDIR_ON_DEVICE}/run"                 # for C: SOCK_PATH = RUNSTATEDIR "/amneziawg/"
+GO_SOCKET_DIR="${RUNSTATEDIR}/amneziawg"               # for Go: sockPath = socketDirectory + "/" + iface + ".sock"
 
 for ARCH in $ARCHES; do
-  echo "==> [3/6] Сборка awg (CLI, цель Makefile называется 'wg') для $ARCH"
+  echo "==> [3/6] Building awg (CLI, the Makefile target is called 'wg') for $ARCH"
   CC="$TOOLCHAIN/bin/${CLANG_TARGET[$ARCH]}-clang"
   STRIP="$TOOLCHAIN/bin/llvm-strip"
   OUT_DIR="$MODULE_DIR/bin/arch/$ARCH"
@@ -78,28 +78,28 @@ for ARCH in $ARCHES; do
 
   ( cd amneziawg-tools/src
     make clean >/dev/null 2>&1 || true
-    # Реальная цель в Makefile называется "wg" (переименовывается в awg
-    # только на этапе `make install`). Bionic на устройстве уже есть -
-    # статическая линковка не нужна и часто ломается на NDK, поэтому
-    # собираем как обычный динамический ELF под Android ABI.
-    # RUNSTATEDIR переопределяет путь UAPI-сокета (см. комментарий выше).
+    # The actual Makefile target is called "wg" (it's renamed to awg
+    # only at the `make install` step). Bionic is already on the device -
+    # static linking isn't needed and often breaks with the NDK, so
+    # we build as a regular dynamic ELF for the Android ABI.
+    # RUNSTATEDIR overrides the UAPI socket path (see the comment above).
     CC="$CC" CFLAGS="-O2" make RUNSTATEDIR="$RUNSTATEDIR" wg -j"$(nproc)"
     "$STRIP" wg -o "$OUT_DIR/awg"
   )
 
-  echo "==> [4/6] Компиляция нативного awg-quick (wg-quick/android.c) для $ARCH"
-  # У amneziawg-tools/wireguard-tools ЕСТЬ готовая C-реализация wg-quick
-  # специально под Android (wg-quick/android.c): она сама поднимает
-  # интерфейс через amneziawg-go, настраивает маршруты/iptables и DNS
-  # через android.net.IDnsResolver по Binder (dlopen libbinder_ndk.so
-  # в рантайме, поэтому явная линковка с libbinder_ndk не нужна).
+  echo "==> [4/6] Compiling native awg-quick (wg-quick/android.c) for $ARCH"
+  # amneziawg-tools/wireguard-tools HAS a ready-made C implementation of
+  # wg-quick specifically for Android (wg-quick/android.c): it brings up the
+  # interface itself via amneziawg-go, sets up routes/iptables and DNS via
+  # android.net.IDnsResolver over Binder (dlopen libbinder_ndk.so at
+  # runtime, so no explicit link against libbinder is needed).
   "$CC" -O2 -D_GNU_SOURCE \
     -DAWG_CONFIG_SEARCH_PATHS="\"${CONFIG_SEARCH_PATH}\"" \
     "amneziawg-tools/src/wg-quick/android.c" \
     -o "$OUT_DIR/awg-quick" -ldl
   "$STRIP" "$OUT_DIR/awg-quick"
 
-  echo "==> [5/6] Сборка amneziawg-go для $ARCH (GOOS=android, cgo)"
+  echo "==> [5/6] Building amneziawg-go for $ARCH (GOOS=android, cgo)"
   (
     cd amneziawg-go
     export GOOS=android
@@ -107,19 +107,19 @@ for ARCH in $ARCHES; do
     export CGO_ENABLED=1
     export CC="$TOOLCHAIN/bin/${CLANG_TARGET[$ARCH]}-clang"
     export CXX="$TOOLCHAIN/bin/${CLANG_TARGET[$ARCH]}-clang++"
-    # Путь модуля берём из go.mod динамически (на момент написания это
-    # github.com/amnezia-vpn/amneziawg-go/v3), чтобы не сломаться при
-    # смене мажорной версии апстрима.
+    # Take the module path from go.mod dynamically (at the time of writing it
+    # is github.com/amnezia-vpn/amneziawg-go/v3), so this doesn't break if the
+    # upstream major version changes.
     GOMOD_PATH="$(head -1 go.mod | awk '{print $2}')"
     go build -trimpath \
       -ldflags="-s -w -X ${GOMOD_PATH}/ipc.socketDirectory=${GO_SOCKET_DIR}" \
       -o "$OUT_DIR/amneziawg-go" .
   )
 
-  echo "==> awg, awg-quick, amneziawg-go для $ARCH готовы в $OUT_DIR"
+  echo "==> awg, awg-quick, amneziawg-go for $ARCH are ready in $OUT_DIR"
 done
 
-echo "==> [6/6] Копирование awg-supervisor (единый POSIX sh, без компиляции) и упаковка zip"
+echo "==> [6/6] Copying awg-supervisor (single POSIX sh, no compilation) and packaging zip"
 for ARCH in $ARCHES; do
   cp "$MODULE_DIR/bin/awg-supervisor" "$MODULE_DIR/bin/arch/$ARCH/awg-supervisor"
   chmod +x "$MODULE_DIR/bin/arch/$ARCH/"*
@@ -127,4 +127,4 @@ done
 
 bash "$SCRIPT_DIR/package.sh"
 
-echo "==> Готово. Смотрите итоговый zip в build/dist/"
+echo "==> Done. See the resulting zip in build/dist/"

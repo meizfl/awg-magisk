@@ -1,6 +1,6 @@
 #!/system/bin/sh
-# service.sh - запускается Magisk в контексте late_start service (после boot)
-# Поднимает AmneziaWG интерфейс через awg-supervisor.
+# service.sh - run by Magisk in the late_start service context (after boot)
+# Brings up the AmneziaWG interface via awg-supervisor.
 
 MODDIR=${0%/*}
 LOG="$MODDIR/logs/service.log"
@@ -13,17 +13,17 @@ mkdir -p "$MODDIR/logs"
 : > "$LOG"
 log "service.sh started, MODDIR=$MODDIR"
 
-# UAPI-сокет amneziawg-go/awg живёт в run/ (см. build/build.sh) - / и /var
-# на Android read-only, поэтому дефолтный /var/run недоступен.
+# The amneziawg-go/awg UAPI socket lives under run/ (see build/build.sh) - / and
+# /var are read-only on Android, so the default /var/run is not writable.
 mkdir -p "$MODDIR/run"
 
-# Ждём полной загрузки системы
+# Wait for the system to finish booting
 until [ "$(getprop sys.boot_completed)" = "1" ]; do
   sleep 1
 done
 log "boot_completed=1"
 
-# Небольшая пауза, чтобы сеть успела подняться
+# Small delay to let the network come up
 sleep 5
 
 export PATH="$MODDIR/bin:/system/bin:/system/xbin:$PATH"
@@ -34,14 +34,14 @@ export CALLING_PACKAGE="org.amnezia.awg"
 CONFIG="$MODDIR/config/wg0.conf"
 
 if [ ! -f "$CONFIG" ]; then
-  log "ERROR: конфиг $CONFIG не найден, выход"
+  log "ERROR: config $CONFIG not found, exiting"
   exit 1
 fi
 
-# Разрешаем чтение конфига только root
+# Restrict config readability to root only
 chmod 600 "$CONFIG" 2>/dev/null
 
-log "Запуск awg-supervisor start"
+log "Starting awg-supervisor start"
 "$MODDIR/bin/awg-supervisor" start "$CONFIG" >> "$LOG" 2>&1 &
 
-log "service.sh завершил инициализацию (supervisor работает в фоне)"
+log "service.sh finished initialization (supervisor running in background)"
