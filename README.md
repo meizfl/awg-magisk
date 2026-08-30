@@ -1,4 +1,4 @@
-# AmneizaWG Magisk
+# awg-quick-magisk
 
 A Magisk module that runs [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-tools)
 (a WireGuard fork with traffic obfuscation) directly on rooted Android — no
