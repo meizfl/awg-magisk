@@ -1,4 +1,4 @@
-# awg-quick-magisk
+# AmneizaWG Magisk
 
 Magisk module for AmneziaWG (a WireGuard fork with traffic obfuscation) on Android:
 brings up `awg0` via the userspace backend `amneziawg-go` and `awg-quick`,
