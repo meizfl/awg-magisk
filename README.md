@@ -26,9 +26,18 @@ build step is a separate, one-time thing you run yourself:
 
 ```bash
 cd build
-./build-abi21.sh           # builds for abi21+(android 5.0+) arm64, arm, x86_64, x86
-./build-abi18.sh           # builds for abi18-20(android 4.3-4.4.4) arm, x86     
-./build-abi21.sh arm64     # or just arm64-v8a (99% of modern phones)
+
+./build-abi21.sh
+# Android 5.0+ (API 21+)
+# arm64-v8a, armeabi-v7a, x86_64, x86
+
+./build-abi18.sh
+# Android 4.3–4.4.4 (API 18–19)
+# armeabi-v7a, x86
+
+./build-abi21.sh arm64
+# или: ./build-abi21.sh arm64-v8a
+# arm64-v8a only - for most modern ARM64 devices
 ```
 
 Requirements: `git`, `curl`, `unzip`, `go >= 1.21`, ~10 GB free disk space
