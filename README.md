@@ -37,7 +37,7 @@ cd build
 
 ./build-abi21.sh arm64
 # или: ./build-abi21.sh arm64-v8a
-# arm64-v8a only - for most modern ARM64 devices
+# arm64-v8a only — 64-bit ARM devices(99% modern smartphones/tablets)
 ```
 
 Requirements: `git`, `curl`, `unzip`, `go >= 1.21`, ~10 GB free disk space
