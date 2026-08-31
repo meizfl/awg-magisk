@@ -31,8 +31,8 @@ cd build
 # Android 5.0+ (API 21+)
 # arm64-v8a, armeabi-v7a, x86_64, x86
 
-./build-abi18.sh
-# Android 4.3–4.4.4 (API 18–19)
+./build-abi16.sh
+# Android 4.1–4.2 (API 16–17)
 # armeabi-v7a, x86
 
 ./build-abi21.sh arm64
@@ -61,19 +61,19 @@ The script:
 5. Cross-compiles `amneziawg-go` (`GOOS=android`, cgo enabled, NDK
    compiler).
 6. Lays everything out under `bin/arch/<abi>/` and packages the final
-   `build/dist/awg-quick-magisk.zip`.
+   zip under `build/dist/` (`awg-quick-magisk-abi21+.zip` or
+   `awg-quick-magisk-abi16-17.zip`, depending on which script you ran).
 
-### Older devices (API < 24, Android 5.0–6.0)
+### Older devices (API < 21)
 
-`build.sh` defaults to `API_LEVEL=21` — the hard floor for any NDK r23+
-(there are no headers/libs below it). Nothing extra to do for that; to
-target something narrower instead:
+`build-abi21.sh` targets API 21 (Android 5.0), the range NDK r23c is
+officially documented for. `build-abi16.sh` targets API 16–17 (Android
+4.1–4.2) instead — empirically, r23c's clang still accepts and
+compiles/links these lower target-triple levels as long as no libc symbol
+actually missing at that level gets referenced (treat this as
+unofficial/best-effort, verified only against r23c).
 
-```bash
-API_LEVEL=24 ./build.sh arm64
-```
-
-Verified in the source to *not* be a blocker on API 21–23:
+Verified in the source to *not* be a blocker on these older API levels:
 - `genkey.c`'s `getentropy()` call is gated behind `__GLIBC__`/`__APPLE__`
   and is never compiled on Android — it always falls through to a raw
   `getrandom` syscall, which works on any kernel regardless of API level.
@@ -81,10 +81,10 @@ Verified in the source to *not* be a blocker on API 21–23:
   check; if it's missing on an old device, DNS-via-Binder is silently
   skipped instead of crashing. Routing and iptables rules are unaffected.
 
-Not independently verified on real Android 5/6 hardware: the exact `ndc`
-command syntax `android.c` uses may differ on very old `netd` versions. If
-routing doesn't apply on such a device (interface comes up but traffic
-doesn't flow), check `logs/supervisor.log` for `[#] ndc ...` errors.
+Not independently verified on real old hardware: the exact `ndc` command
+syntax `android.c` uses may differ on very old `netd` versions. If routing
+doesn't apply on such a device (interface comes up but traffic doesn't
+flow), check `logs/supervisor.log` for `[#] ndc ...` errors.
 
 ### Why `awg-supervisor` is so thin
 
@@ -96,6 +96,18 @@ optional extra hooks (e.g. your own LAN-bypass rules), enabled only via
 `AWG_EXTRA_HOOKS=1` in `service.sh`, to avoid duplicating or conflicting
 with what `awg-quick` already handles.
 
+### bionic is missing `getline()` below API 18
+
+`ipc-uapi.h`, `setconf.c` and `wg-quick/android.c` all call `getline()`.
+bionic only gained it in API level 18 (Jelly Bean MR2) — targeting anything
+lower (like `build-abi16.sh`'s API 16–17) compiles with just an "implicit
+declaration" warning but then fails to **link** with `undefined symbol:
+getline`, since the symbol genuinely doesn't exist in that API level's
+libc. `build-abi16.sh` force-includes a portable `static inline getline()`
+shim via `-include` — it is only ever applied there, never in
+`build-abi21.sh`, since bionic already exports the real symbol at API 18+
+and the shim would clash with it.
+
 ### bionic is missing `strchrnul()`
 
 `wg-quick/android.c` calls the GNU `strchrnul()` extension in its per-app
@@ -103,7 +115,8 @@ UID selection code, even though bionic never provides it — it's a
 glibc/BSD-only function, unrelated to `_GNU_SOURCE` (notably, `config.c` in
 the same repo explicitly avoids it with the comment "This is what
 strchrnul is for, but that isn't portable" — looks like an oversight
-specific to `android.c`). `build.sh` patches in a portable `static inline`
+specific to `android.c`). Both `build-abi16.sh` and `build-abi21.sh` patch
+in a portable `static inline`
 replacement right after the `ARRAY_SIZE` macro before compiling
 (idempotent, keyed off a marker comment, so reruns and future repo updates
 that don't touch that region stay safe).
@@ -124,17 +137,18 @@ compile time and makes `awg-quick` skip the broadcast entirely
 By default both the C `awg` CLI (`RUNSTATEDIR`, normally `/var/run`) and
 the Go daemon `amneziawg-go` (`ipc.socketDirectory`, normally
 `/var/run/amneziawg`) look for the UAPI socket under `/var`, which doesn't
-exist on Android (`/` is mounted read-only). `build/build.sh` redirects
-both paths to `run/` inside the module directory via `make RUNSTATEDIR=...`
-and `-ldflags -X .../ipc.socketDirectory=...` respectively — they have to
-match, or `awg` won't be able to reach the daemon's socket.
+exist on Android (`/` is mounted read-only). `build-abi16.sh` and
+`build-abi21.sh` redirect both paths to `run/` inside the module directory
+via `make RUNSTATEDIR=...` and `-ldflags -X .../ipc.socketDirectory=...`
+respectively — they have to match, or `awg` won't be able to reach the
+daemon's socket.
 
 ## Installing on a device
 
 1. Edit `config/wg0.conf` — fill in your `PrivateKey`, the server's
    `PublicKey`, `Endpoint`, and the obfuscation parameters (`Jc`, `Jmin`,
    `Jmax`, `H1`–`H4`).
-2. Install `build/dist/awg-quick-magisk.zip` via the Magisk App:
+2. Install the resulting zip from `build/dist/` via the Magisk App:
    Modules → Install from storage.
 3. Reboot — `service.sh` brings the tunnel up automatically once
    `sys.boot_completed=1`.
@@ -162,8 +176,10 @@ awg-magisk/
 │   └── network.sh                                    # wait_for_network / MTU detection
 ├── logs/                                                # service/action/supervisor logs
 └── build/
-    ├── build.sh                                            # NDK cross-compilation (run manually)
-    └── package.sh                                             # final zip packaging
+    ├── build-abi16.sh                                      # NDK cross-compile, API 16-17 (run manually)
+    ├── build-abi21.sh                                          # NDK cross-compile, API 21+ (run manually)
+    ├── package-abi16.sh                                          # zip packaging for the abi16 build
+    └── package-abi21.sh                                              # zip packaging for the abi21 build
 ```
 
 ## Logs
@@ -182,8 +198,8 @@ Check `logs/service.log`, `logs/supervisor.log`, `logs/routing.log`,
 - `scripts/routing.sh` uses fixed `ip rule` priorities (51820–51822) — if
   you already have another VPN module using the same priorities, change
   `AWG_TABLE`/priorities via environment variables in `service.sh`.
-- Minimum `API_LEVEL` the binaries are built for defaults to 21 (Android
-  5.0), configurable in `build/build.sh`.
+- Minimum `API_LEVEL` defaults to 21 in `build-abi21.sh` and to 16 in
+  `build-abi16.sh` — both are overridable via the `API_LEVEL` env var.
 
 ## Disclaimer
 
