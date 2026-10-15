@@ -66,6 +66,30 @@ echo "==> [2/5] Cloning amneziawg-tools and amneziawg-go sources"
 [ -d amneziawg-tools ] || git clone --depth 1 "$AWG_TOOLS_REPO" amneziawg-tools
 [ -d amneziawg-go ]    || git clone --depth 1 "$AWG_GO_REPO" amneziawg-go
 
+# Magisk Action/service callers can exit after awg-quick has started the
+# userspace backend. Upstream daemonizes with StartProcess but inherits the
+# caller's process group; detach the persistent backend into a new session so
+# caller cleanup cannot take the TUN interface down with it.
+GO_MAIN="amneziawg-go/main.go"
+if [ -f "$GO_MAIN" ] && ! grep -q "AWG_MAGISK_DETACH_DAEMON" "$GO_MAIN"; then
+  echo "==> Patching amneziawg-go daemon to detach from the caller process group"
+  python3 - "$GO_MAIN" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+if '"syscall"' not in s:
+    s = s.replace('\t"strconv"\n', '\t"strconv"\n\t"syscall"\n', 1)
+old = '\t\tattr := &os.ProcAttr{\n'
+new = ('\t\t// AWG_MAGISK_DETACH_DAEMON: survive Magisk Action/service caller exit.\n'
+       '\t\tattr := &os.ProcAttr{\n'
+       '\t\t\tSys: &syscall.SysProcAttr{Setsid: true},\n')
+if old not in s:
+    raise SystemExit('could not find daemon ProcAttr in amneziawg-go/main.go')
+s = s.replace(old, new, 1)
+p.write_text(s)
+PY
+fi
+
 # Map: our ABI name -> (Go GOARCH, clang target triple, bin/arch subdir)
 declare -A GOARCH_MAP=( [arm64]=arm64 [arm]=arm [x86_64]=amd64 [x86]=386 )
 declare -A CLANG_TARGET=(

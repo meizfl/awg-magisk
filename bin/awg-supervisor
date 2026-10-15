@@ -17,8 +17,39 @@ MODDIR="${AWG_MODDIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 BIN="$MODDIR/bin"
 IFACE="${AWG_IFACE:-wg0}"
 LOG="$MODDIR/logs/supervisor.log"
+LOCKDIR="$MODDIR/run/awg-supervisor.lock"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
+
+acquire_lock() {
+  mkdir -p "$MODDIR/run"
+  tries=0
+  while ! mkdir "$LOCKDIR" 2>/dev/null; do
+    if [ -f "$LOCKDIR/pid" ]; then
+      lock_pid="$(cat "$LOCKDIR/pid" 2>/dev/null)"
+      case "$lock_pid" in
+        ''|*[!0-9]*) ;;
+        *)
+          if ! kill -0 "$lock_pid" 2>/dev/null; then
+            stale="$LOCKDIR.stale.$$"
+            if mv "$LOCKDIR" "$stale" 2>/dev/null; then
+              rm -rf "$stale"
+            fi
+            continue
+          fi
+          ;;
+      esac
+    fi
+    tries=$((tries + 1))
+    if [ "$tries" -ge 30 ]; then
+      log "ERROR: timed out waiting for control lock"
+      return 1
+    fi
+    sleep 1
+  done
+  echo "$$" > "$LOCKDIR/pid"
+  trap 'rm -rf "$LOCKDIR"' EXIT
+}
 
 export PATH="$BIN:/system/bin:/system/xbin:$PATH"
 
@@ -42,11 +73,47 @@ do_start() {
   wait_for_network 30 || log "WARNING: network did not come up in time, trying anyway"
 
   log "awg-quick up $CONFIG"
-  "$BIN/awg-quick" up "$CONFIG" >> "$LOG" 2>&1
-  RC=$?
-  if [ $RC -ne 0 ]; then
+  # Android's netd may take a short time to release an interface after the
+  # previous VPN network is destroyed. If it reports that exact transient
+  # condition while attaching wg0 to the new network, awg-quick rolls back
+  # the partially-created interface; retry once after netd has caught up.
+  mkdir -p "$MODDIR/run"
+  UP_OUTPUT="$MODDIR/run/awg-up.$$.log"
+  ATTEMPT=0
+  STARTED=0
+  while [ "$ATTEMPT" -lt 3 ]; do
+    ATTEMPT=$((ATTEMPT + 1))
+    log "Start attempt $ATTEMPT/3"
+    "$BIN/awg-quick" up "$CONFIG" > "$UP_OUTPUT" 2>&1
+    RC=$?
+    cat "$UP_OUTPUT" >> "$LOG"
+    if [ $RC -ne 0 ]; then
+      if grep -q 'addInterfaceToNetwork() failed (Device or resource busy)' "$UP_OUTPUT"; then
+        log "Android netd still holds the interface; waiting 5 seconds before retry"
+        sleep 5
+        continue
+      fi
+      break
+    fi
+
+    # awg-quick can return after starting the userspace daemon. Verify that
+    # the TUN device survived daemon startup before reporting success.
+    sleep 3
+    if ip link show dev "$IFACE" >/dev/null 2>&1; then
+      STARTED=1
+      break
+    fi
+
+    log "ERROR: awg-quick returned success, but $IFACE disappeared; backend process/socket snapshot follows"
+    ps -A 2>&1 | grep '[a]mneziawg-go' >> "$LOG"
+    ls -la "$MODDIR/run/amneziawg" >> "$LOG" 2>&1
+    sleep 2
+  done
+  rm -f "$UP_OUTPUT"
+  if [ $RC -ne 0 ] || [ "$STARTED" -ne 1 ]; then
     log "ERROR: awg-quick up exited with code $RC"
-    exit $RC
+    [ $RC -ne 0 ] && exit "$RC"
+    exit 1
   fi
 
   if [ "${AWG_EXTRA_HOOKS:-0}" = "1" ]; then
@@ -54,7 +121,8 @@ do_start() {
     "$MODDIR/scripts/dns.sh" up "$CONFIG" >> "$LOG" 2>&1
   fi
 
-  log "AmneziaWG started successfully on $IFACE"
+  log "AmneziaWG interface $IFACE started"
+  echo "AmneziaWG interface started."
 }
 
 do_stop() {
@@ -67,8 +135,20 @@ do_stop() {
 
   log "awg-quick down $CONFIG"
   "$BIN/awg-quick" down "$CONFIG" >> "$LOG" 2>&1
+  RC=$?
+  if [ $RC -ne 0 ]; then
+    log "ERROR: awg-quick down exited with code $RC"
+    exit $RC
+  fi
+
+  # On Android 17, ndc can report the interface as busy for several seconds
+  # after a successful network destroy. Give netd and the userspace backend
+  # time to finish releasing wg0 before the next Action-triggered start.
+  log "Waiting 5 seconds for Android to release the VPN interface"
+  sleep 5
 
   log "AmneziaWG stopped"
+  echo "AmneziaWG stopped."
 }
 
 do_status() {
@@ -82,8 +162,26 @@ do_status() {
 }
 
 case "$1" in
-  start) do_start "$2" ;;
-  stop) do_stop "$2" ;;
+  start)
+    acquire_lock || exit 75
+    echo "Starting AmneziaWG..."
+    do_start "$2"
+    ;;
+  stop)
+    acquire_lock || exit 75
+    echo "Stopping AmneziaWG..."
+    do_stop "$2"
+    ;;
+  toggle)
+    acquire_lock || exit 75
+    if ip link show "$IFACE" >/dev/null 2>&1; then
+      echo "AmneziaWG is active, stopping..."
+      do_stop "$2"
+    else
+      echo "AmneziaWG is down, starting..."
+      do_start "$2"
+    fi
+    ;;
   status) do_status ;;
   *) echo "usage: awg-supervisor {start|stop|status} [config]"; exit 1 ;;
 esac
